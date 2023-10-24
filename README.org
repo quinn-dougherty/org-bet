@@ -1,0 +1,6 @@
+#+title: ~org-bet~
+
+File markets and bets in ~org-mode~.
+
+* Requires Manifold Markets API key
+~manifold.markets/profile~ after signing in with google SSO.
