@@ -56,9 +56,12 @@ ENDPOINT is the API endpoint. DATA is the data to be sent as JSON."
 
 (defun manifold-markets-get-managrams ()
   "Get available instruments from Manifold Markets."
-  (let ((response (manifold-markets-request "instruments")))
+  (let ((response (manifold-markets-request "managrams")))
     (manifold-markets-parse-json response)))
 
+(defun manifold-markets-post-managram (user-id amount &optional message)
+  "Send a managram to someone"
+  )
 
 
 
@@ -67,8 +70,7 @@ ENDPOINT is the API endpoint. DATA is the data to be sent as JSON."
 
 
 
-
-
+;; above is gpt4's take, below is me transcribing ideas from karthink's gptel package
 
 
 (eval-when-compile
