@@ -4,13 +4,14 @@ File markets and bets in ~org-mode~.
 
 I got tired of Manifold testing their website on me so I decided to just make mana in emacs.
 
-* Manifold Markets API key for ~POST~ requests
+* Manifold Markets and Fatebook API keys for ~POST~ requests
 Which you get on ~manifold.markets/profile~ after signing in with google SSO, but I see no reason to restrict ~GET~ requests to key havers.
 
 A little later should be something like
 #+begin_src
-$ cat ~/.auth
+$ cat ~/.authinfo
 machine https://manifold.markets/api login apikey password <rationalussy>
+machine https://fatebook.io/api/ login apikey password <rationalussy>
+$ gpg -c ~/.authinfo
 #+end_src
 
-* I called it ~org-bet~ instead of ~org-manifold~ because presumably we could expand it to other betting platforms. Lmao.
