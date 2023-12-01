@@ -23,147 +23,136 @@
 (require 'url)
 (require 'map)
 (require 'text-property-search)
+(require 'auth-source)
+
 
 ;; test: https://dev.manifold.markets/mirrorbot/kalshi-will-the-government-be-shut
 
-(defvar manifold-markets-base-url "https://dev.manifold.markets/api/v0/")
 
-(defun manifold-markets-get-request (endpoint)
-  "Make a GET request to the Manifold Markets API. ENDPOINT is a string."
-  (let ((url (concat manifold-markets-base-url endpoint))
-        buffer)
-    (setq buffer (url-retrieve-synchronously url))
-    (with-current-buffer buffer
-      (goto-char (point-min))
-      (re-search-forward "^$")
-      (delete-region (point) (point-min))
-      (buffer-string))))
+(defvar manifold-base-url "dev.manifold.markets/api/v0/")
+(defvar manifold-api-key "76877963-22ef-48b3-8b46-1a1a5975d49b")
 
-
-;; (let ((url-request-method "POST")
-;;       (url-request-extra-headers '(("Content-Type" . "application/json")))
-;;       (url-request-data (json-encode `((amount . ,amount)
-;;                                       (contractId . ,contractId)
-;;                                       (outcome . ,outcome)
-;;                                       (limitProb . ,limitProb)  ; Only include if provided
-;;                                       (expiresAt . ,expiresAt))))  ; Only include if provided
-;;       (url "https://api.example.com/v0/bet"))  ; Replace with the actual API endpoint
-
-;;   (url-retrieve url (lambda (status)
-;;                       ;; Handle the response here
-;;                       (when (plist-get status :error)
-;;                         (error "Error in request: %S" status))
-;;                       ;; Process the response body
-;;                       (let ((response (buffer-string)))
-;;                         ;; Do something with the response
-;;                         ))))
-(defvar manifold-markets-api-key "76877963-22ef-48b3-8b46-1a1a5975d49b")
-
-(defun manifold-markets-place-bet (amount slug outcome &optional limitProb expiresAt)
-  "Place a bet on the Manifold Markets API."
-  (let* ((contractId (get-contract-id-from-slug slug)) ; Retrieve contract ID first
-         (url-request-method "POST")
-         (url-request-extra-headers '(("Content-Type" . "application/json")
-                                      ("Authorization" . "Key 76877963-22ef-48b3-8b46-1a1a5975d49b")))
-         ;; Now create the data with the retrieved contract ID
-         (url-request-data (json-encode `(("amount" . ,amount)
-                                          ("contractId" . ,contractId)
-                                          ("outcome" . ,outcome)
-                                          ,@(when limitProb `(("limitProb" . ,limitProb)))
-                                          ,@(when expiresAt `(("expiresAt" . ,expiresAt))))))
-         (url "https://dev.manifold.markets/api/v0/bet"))
-    (with-current-buffer (url-retrieve-synchronously url)
-      (goto-char url-http-end-of-headers)
-      (let ((response (json-read)))
-        (kill-buffer)
-        response))))
-
-(get-contract-id-from-slug "kalshi-will-the-government-be-shut")
-(manifold-markets-place-bet 1 "kalshi-will-the-government-be-shut" "YES")
-;; NOTE
-
-;; (defun manifold-markets-place-bet (amount contractId outcome &optional limitProb expiresAt)
-;;   "Place a bet on Manifold Markets."
-;;   (let ((data `(("amount" . ,amount)
-;;                 ("contractId" . ,contractId)
-;;                 ("outcome" . ,outcome)
-;;                 ,@(when limitProb `(("limitProb" . ,limitProb)))
-;;                 ,@(when expiresAt `(("expiresAt" . ,expiresAt))))))
-;; (manifold-markets-post-request "/v0/bet" data)))
-
-
-(defun manifold-markets-post-request (endpoint data)
-  "Make a POST request to the Manifold Markets API.
-ENDPOINT is the API endpoint. DATA is the data to be sent as JSON."
-  (let ((url (concat manifold-markets-base-url endpoint))
-        (url-request-method "POST")
-        (url-request-data (json-encode data))
-        (url-request-extra-headers '(("Content-Type" . "application/json")))
-        buffer)
-    (setq buffer (url-retrieve-synchronously url))
-    (with-current-buffer buffer
-      (goto-char (point-min))
-      (re-search-forward "^$")
-      (delete-region (point) (point-min))
-      (buffer-string))))
-
-(defun manifold-markets-parse-json (json-string)
+(defun manifold-parse-json (json-string)
   "Parse the JSON response from Manifold Markets API."
   (json-read-from-string json-string))
 
-(defun manifold-markets-get-managrams ()
-  "Get available instruments from Manifold Markets."
-  (let ((response (manifold-markets-request "managrams")))
-    (manifold-markets-parse-json response)))
+
+(defun manifold-get-request (endpoint)
+  "Make a GET request to the Manifold Markets API. ENDPOINT is a string."
+  (let ((url (concat "https://" manifold-base-url endpoint))
+        buffer)
+    (setq buffer (url-retrieve-synchronously url))
+    (with-current-buffer buffer
+      (goto-char (point-min))
+      (re-search-forward "^$")
+      (delete-region (point) (point-min))
+      (buffer-string))))
+
+(defun get-manifold-api-key ()
+  "Retrieve the Manifold API key from authinfo.gpg."
+  (let ((credential (auth-source-search :max 1
+                                        :host manifold-base-url
+                                        :user "apikey"
+                                        :type 'netrc
+                                        :require '(:password))))
+    (if credential
+        (let ((key (plist-get (car credential) :password)))
+          (if key
+              key
+            (error "No API key found for dev.manifold.markets/api/v0 in authinfo.gpg")))
+      (error "No credentials found for dev.manifold.markets/api/v0 in authinfo.gpg"))))
+
+;; Tassilo's (actually works)
+(defun manifold--api-key-fn (&optional host)
+  (let* ((host (or host "dev.manifold.markets"))
+         (credentials (let ((auth-source-creation-prompts '((secret . "Enter API key for %h: "))))
+                        (auth-source-search :host host
+                                            :user "apikey"
+                                            :type 'netrc
+                                            :max 1))))
+    (let ((secret (plist-get (car credentials) :secret)))
+      (unless secret
+        (error "You need to configure an API key for Manifold. See https://github.com/sonofhypnos/fatebook.el#user-content-storing-your-api-keys"))
+      secret)))
+(funcall (manifold--api-key-fn "dev.manifold.markets/api/v0"))
 
 
+(defun manifold-post-request (endpoint data)
+  "Make a POST request to the Manifold Markets API.
+ENDPOINT is the API endpoint. DATA is the data to be sent as JSON."
+  (let ((url (concat "https://" manifold-base-url endpoint))
+        (url-request-method "POST")
+        (url-request-data (json-encode data))
+        (url-request-extra-headers `(("Content-Type" . "application/json")
+                                     ("Authorization" . ,(concat "Key " manifold-api-key))))
+        buffer)
+    (setq buffer (url-retrieve-synchronously url))
+    (with-current-buffer buffer
+      (goto-char (point-min))
+      (re-search-forward "^$")
+      (delete-region (point) (point-min))
+      (buffer-string))))
 
-(cdr '(id . "K4x5nvjCv6GMJqxiPgyp"))
-(cdr (get-contract-id-from-slug
-      "kalshi-will-the-government-be-shut"))
+
+;; test
+(defun manifold--api-key-fn (&optional host)
+  (let* ((host (or host "dev.manifold.markets"))
+         (credentials (let ((auth-source-creation-prompts '((secret . "Enter API key for %h: "))))
+                        (auth-source-search :host host
+                                            :user "apikey"
+                                            :type 'netrc
+                                            :max 1))))
+    (let ((secret (plist-get (car credentials) :secret)))
+      (unless secret
+        (error "You need to configure an API key for Manifold. See https://github.com/sonofhypnos/fatebook.el#user-content-storing-your-api-keys"))
+      secret)))
+(funcall (manifold--api-key-fn "dev.manifold.markets/api/v0"))
 
 (defun get-contract-id-from-slug (marketSlug)
   "Get contractId from marketSlug."
-  (let ((url (format "https://dev.manifold.markets/api/v0/slug/%s" marketSlug)))
-    (with-current-buffer (url-retrieve-synchronously url)
-      (goto-char url-http-end-of-headers)
-      (let* ((response (json-read)) ;; Read the JSON response
-             (contractId-pair (assoc 'id response))) ;; Find the contractId pair directly in the response
-        (kill-buffer)
-        (when (consp contractId-pair) ;; Check if contractId-pair is a cons cell
-          (cdr contractId-pair))))))
+  (let* ((endpoint (format "slug/%s" marketSlug))
+         (response (manifold-get-request endpoint))
+         (json-response (json-read-from-string response))
+         (contractId-pair (assoc 'id json-response)))
+    (when (consp contractId-pair) ;; Check if contractId-pair is a cons cell
+      (cdr contractId-pair))))
+
+(defun get-manifold-api-key ()
+  "Retrieve the Manifold API key from authinfo.gpg."
+  (let ((credential (auth-source-search :max 1
+                                        :host manifold-base-url
+                                        :user "apikey"
+                                        :type 'netrc
+                                        :require '(:password))))
+    (if credential
+        (let ((key (plist-get (car credential) :password)))
+          (if key
+              key
+            (error "No API key found for dev.manifold.markets/api/v0 in authinfo.gpg")))
+      (error "No credentials found for dev.manifold.markets/api/v0 in authinfo.gpg"))))
+(get-manifold-api-key)
+
+(defun manifold-place-bet (amount slug outcome &optional limitProb expiresAt)
+  "Place a bet on the Manifold Markets API."
+  (let* ((contractId (get-contract-id-from-slug slug)) ; Retrieve contract ID first
+         ;; Now create the data with the retrieved contract ID
+         (data `(("amount" . ,amount)
+                 ("contractId" . ,contractId)
+                 ("outcome" . ,outcome)
+                 ,@(when limitProb `(("limitProb" . ,limitProb)))
+                 ,@(when expiresAt `(("expiresAt" . ,expiresAt)))))
+         (response (manifold-post-request "bet" data)))
+    response))
+
+;; test
+(get-contract-id-from-slug "kalshi-will-the-government-be-shut")
+(manifold-place-bet 1 "kalshi-will-the-government-be-shut" "NO")
 
 
-(message (get-contract-id-from-slug
-          "kalshi-will-the-government-be-shut"))
-(let ((endpoint "mirrorbot/kalshi-will-the-government-be-shut"))
-  (manifold-markets-get-request endpoint))
-
-;; (defun manifold-markets-post-managram (user-id amount &optional message)
-;;   "Send a managram to someone"
-;;   )
-
-
-
-
-(defun fatebook--api-key-fn ()
-  "Retrieve the Fatebook API key from `fatebook-auth-source-backend'."
-  (let ((credentials (let ((auth-source-creation-prompts '((secret . "Enter API key for %h: "))))
-                       (auth-source-search :host "fatebook.io"
-                                           :user "defaultUser"
-                                           :type fatebook-auth-source-backend
-                                           ;;:create ;NOTE: auth-source does not support deletion. A
-                                           ;;convoluted idea that could work is that we
-                                           ;;just add more and more api keys, and we version them
-                                           ;;with the :user handle and then just try all of them if
-                                           ;;none worka. Could lead to complaints from fatebook
-                                           ;;though.
-                                           :max 1))))
-
-    (let ((secret (plist-get (car credentials) :secret)))
-      (unless secret
-        (error "You need to configure an API key for fatebook. See https://github.com/sonofhypnos/fatebook.el#user-content-storing-your-api-keys"))
-      secret)))
+(defun manifold-get-managrams ()
+  "Get available instruments from Manifold Markets."
+  (let ((response (manifold-request "managrams")))
+    (manifold-parse-json response)))
 
 
 
