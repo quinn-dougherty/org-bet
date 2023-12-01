@@ -9,7 +9,7 @@
 ;; Version: 0.0.1
 ;; Keywords: abbrev bib c calendar comm convenience data docs emulations extensions faces files frames games hardware help hypermedia i18n internal languages lisp local maint mail matching mouse multimedia news outlines processes terminals tex tools unix vc wp
 ;; Homepage: https://github.com/quinn-dougherty/manifold
-;; Package-Requires: ((emacs "24.3"))
+;; Package-Requires: ((emacs "27.1"))
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
@@ -21,8 +21,12 @@
 
 (require 'json)
 (require 'url)
+(require 'map)
+(require 'text-property-search)
 
-(defvar manifold-markets-base-url "https://manifold.markets/api/v0/")
+;; test: https://dev.manifold.markets/mirrorbot/kalshi-will-the-government-be-shut
+
+(defvar manifold-markets-base-url "https://dev.manifold.markets/api/v0/")
 
 (defun manifold-markets-get-request (endpoint)
   "Make a GET request to the Manifold Markets API. ENDPOINT is a string."
@@ -34,6 +38,59 @@
       (re-search-forward "^$")
       (delete-region (point) (point-min))
       (buffer-string))))
+
+
+;; (let ((url-request-method "POST")
+;;       (url-request-extra-headers '(("Content-Type" . "application/json")))
+;;       (url-request-data (json-encode `((amount . ,amount)
+;;                                       (contractId . ,contractId)
+;;                                       (outcome . ,outcome)
+;;                                       (limitProb . ,limitProb)  ; Only include if provided
+;;                                       (expiresAt . ,expiresAt))))  ; Only include if provided
+;;       (url "https://api.example.com/v0/bet"))  ; Replace with the actual API endpoint
+
+;;   (url-retrieve url (lambda (status)
+;;                       ;; Handle the response here
+;;                       (when (plist-get status :error)
+;;                         (error "Error in request: %S" status))
+;;                       ;; Process the response body
+;;                       (let ((response (buffer-string)))
+;;                         ;; Do something with the response
+;;                         ))))
+(defvar manifold-markets-api-key "76877963-22ef-48b3-8b46-1a1a5975d49b")
+
+(defun manifold-markets-place-bet (amount slug outcome &optional limitProb expiresAt)
+  "Place a bet on the Manifold Markets API."
+  (let* ((contractId (get-contract-id-from-slug slug)) ; Retrieve contract ID first
+         (url-request-method "POST")
+         (url-request-extra-headers '(("Content-Type" . "application/json")
+                                      ("Authorization" . "Key 76877963-22ef-48b3-8b46-1a1a5975d49b")))
+         ;; Now create the data with the retrieved contract ID
+         (url-request-data (json-encode `(("amount" . ,amount)
+                                          ("contractId" . ,contractId)
+                                          ("outcome" . ,outcome)
+                                          ,@(when limitProb `(("limitProb" . ,limitProb)))
+                                          ,@(when expiresAt `(("expiresAt" . ,expiresAt))))))
+         (url "https://dev.manifold.markets/api/v0/bet"))
+    (with-current-buffer (url-retrieve-synchronously url)
+      (goto-char url-http-end-of-headers)
+      (let ((response (json-read)))
+        (kill-buffer)
+        response))))
+
+(get-contract-id-from-slug "kalshi-will-the-government-be-shut")
+(manifold-markets-place-bet 1 "kalshi-will-the-government-be-shut" "YES")
+;; NOTE
+
+;; (defun manifold-markets-place-bet (amount contractId outcome &optional limitProb expiresAt)
+;;   "Place a bet on Manifold Markets."
+;;   (let ((data `(("amount" . ,amount)
+;;                 ("contractId" . ,contractId)
+;;                 ("outcome" . ,outcome)
+;;                 ,@(when limitProb `(("limitProb" . ,limitProb)))
+;;                 ,@(when expiresAt `(("expiresAt" . ,expiresAt))))))
+;; (manifold-markets-post-request "/v0/bet" data)))
+
 
 (defun manifold-markets-post-request (endpoint data)
   "Make a POST request to the Manifold Markets API.
@@ -59,13 +116,54 @@ ENDPOINT is the API endpoint. DATA is the data to be sent as JSON."
   (let ((response (manifold-markets-request "managrams")))
     (manifold-markets-parse-json response)))
 
-(defun manifold-markets-post-managram (user-id amount &optional message)
-  "Send a managram to someone"
-  )
+
+
+(cdr '(id . "K4x5nvjCv6GMJqxiPgyp"))
+(cdr (get-contract-id-from-slug
+      "kalshi-will-the-government-be-shut"))
+
+(defun get-contract-id-from-slug (marketSlug)
+  "Get contractId from marketSlug."
+  (let ((url (format "https://dev.manifold.markets/api/v0/slug/%s" marketSlug)))
+    (with-current-buffer (url-retrieve-synchronously url)
+      (goto-char url-http-end-of-headers)
+      (let* ((response (json-read)) ;; Read the JSON response
+             (contractId-pair (assoc 'id response))) ;; Find the contractId pair directly in the response
+        (kill-buffer)
+        (when (consp contractId-pair) ;; Check if contractId-pair is a cons cell
+          (cdr contractId-pair))))))
+
+
+(message (get-contract-id-from-slug
+          "kalshi-will-the-government-be-shut"))
+(let ((endpoint "mirrorbot/kalshi-will-the-government-be-shut"))
+  (manifold-markets-get-request endpoint))
+
+;; (defun manifold-markets-post-managram (user-id amount &optional message)
+;;   "Send a managram to someone"
+;;   )
 
 
 
 
+(defun fatebook--api-key-fn ()
+  "Retrieve the Fatebook API key from `fatebook-auth-source-backend'."
+  (let ((credentials (let ((auth-source-creation-prompts '((secret . "Enter API key for %h: "))))
+                       (auth-source-search :host "fatebook.io"
+                                           :user "defaultUser"
+                                           :type fatebook-auth-source-backend
+                                           ;;:create ;NOTE: auth-source does not support deletion. A
+                                           ;;convoluted idea that could work is that we
+                                           ;;just add more and more api keys, and we version them
+                                           ;;with the :user handle and then just try all of them if
+                                           ;;none worka. Could lead to complaints from fatebook
+                                           ;;though.
+                                           :max 1))))
+
+    (let ((secret (plist-get (car credentials) :secret)))
+      (unless secret
+        (error "You need to configure an API key for fatebook. See https://github.com/sonofhypnos/fatebook.el#user-content-storing-your-api-keys"))
+      secret)))
 
 
 
@@ -77,10 +175,6 @@ ENDPOINT is the API endpoint. DATA is the data to be sent as JSON."
   (require 'subr-x)
   (require 'cl-lib))
 
-(require 'url)
-(require 'json)
-(require 'map)
-(require 'text-property-search)
 
 (defgroup org-manifold nil
   "Bet on anything, in emacs."
