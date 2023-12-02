@@ -2,8 +2,8 @@
 ;;
 ;; Copyright (C) 2023 Quinn Dougherty
 ;;
-;; Author: Quinn Dougherty <quinnd@riseup.net>
-;; Maintainer: Quinn Dougherty <quinnd@riseup.net>
+;; Author: Quinn Dougherty <quinnd@riseup.net>, Tassilo <sonofhypnos>
+;; Maintainer: Quinn Dougherty <quinnd@riseup.net>, Tassilo <sonofhypnos>
 ;; Created: October 24, 2023
 ;; Modified: October 24, 2023
 ;; Version: 0.0.1
@@ -28,15 +28,14 @@
 
 ;; test: https://dev.manifold.markets/mirrorbot/kalshi-will-the-government-be-shut
 
-
-(defvar manifold-base-url "dev.manifold.markets/api/v0/")
-(defvar manifold-api-key "76877963-22ef-48b3-8b46-1a1a5975d49b")
+(defvar manifold-hostname "dev.manifold.markets")
+(defvar manifold-base-url (concat manifold-hostname "/api/v0/"))
 
 (defun manifold-parse-json (json-string)
   "Parse the JSON response from Manifold Markets API."
   (json-read-from-string json-string))
 
-
+;; Auth and network calls
 (defun manifold-get-request (endpoint)
   "Make a GET request to the Manifold Markets API. ENDPOINT is a string."
   (let ((url (concat "https://" manifold-base-url endpoint))
@@ -51,7 +50,7 @@
 (defun get-manifold-api-key ()
   "Retrieve the Manifold API key from authinfo.gpg."
   (let ((credential (auth-source-search :max 1
-                                        :host manifold-base-url
+                                        :host manifold-hostname
                                         :user "apikey"
                                         :type 'netrc
                                         :require '(:password))))
@@ -61,20 +60,6 @@
               key
             (error "No API key found for dev.manifold.markets/api/v0 in authinfo.gpg")))
       (error "No credentials found for dev.manifold.markets/api/v0 in authinfo.gpg"))))
-
-;; Tassilo's (actually works)
-(defun manifold--api-key-fn (&optional host)
-  (let* ((host (or host "dev.manifold.markets"))
-         (credentials (let ((auth-source-creation-prompts '((secret . "Enter API key for %h: "))))
-                        (auth-source-search :host host
-                                            :user "apikey"
-                                            :type 'netrc
-                                            :max 1))))
-    (let ((secret (plist-get (car credentials) :secret)))
-      (unless secret
-        (error "You need to configure an API key for Manifold. See https://github.com/sonofhypnos/fatebook.el#user-content-storing-your-api-keys"))
-      secret)))
-(funcall (manifold--api-key-fn "dev.manifold.markets/api/v0"))
 
 
 (defun manifold-post-request (endpoint data)
@@ -94,21 +79,7 @@ ENDPOINT is the API endpoint. DATA is the data to be sent as JSON."
       (buffer-string))))
 
 
-;; test
-(defun manifold--api-key-fn (&optional host)
-  (let* ((host (or host "dev.manifold.markets"))
-         (credentials (let ((auth-source-creation-prompts '((secret . "Enter API key for %h: "))))
-                        (auth-source-search :host host
-                                            :user "apikey"
-                                            :type 'netrc
-                                            :max 1))))
-    (let ((secret (plist-get (car credentials) :secret)))
-      (unless secret
-        (error "You need to configure an API key for Manifold. See https://github.com/sonofhypnos/fatebook.el#user-content-storing-your-api-keys"))
-      secret)))
-(funcall (manifold--api-key-fn "dev.manifold.markets/api/v0"))
-
-(defun get-contract-id-from-slug (marketSlug)
+(defun manifold-get-contract-id-from-slug (marketSlug)
   "Get contractId from marketSlug."
   (let* ((endpoint (format "slug/%s" marketSlug))
          (response (manifold-get-request endpoint))
@@ -117,24 +88,9 @@ ENDPOINT is the API endpoint. DATA is the data to be sent as JSON."
     (when (consp contractId-pair) ;; Check if contractId-pair is a cons cell
       (cdr contractId-pair))))
 
-(defun get-manifold-api-key ()
-  "Retrieve the Manifold API key from authinfo.gpg."
-  (let ((credential (auth-source-search :max 1
-                                        :host manifold-base-url
-                                        :user "apikey"
-                                        :type 'netrc
-                                        :require '(:password))))
-    (if credential
-        (let ((key (plist-get (car credential) :password)))
-          (if key
-              key
-            (error "No API key found for dev.manifold.markets/api/v0 in authinfo.gpg")))
-      (error "No credentials found for dev.manifold.markets/api/v0 in authinfo.gpg"))))
-(get-manifold-api-key)
-
-(defun manifold-place-bet (amount slug outcome &optional limitProb expiresAt)
+(defun manifold-place-bet-from-slug (slug outcome amount &optional limitProb expiresAt)
   "Place a bet on the Manifold Markets API."
-  (let* ((contractId (get-contract-id-from-slug slug)) ; Retrieve contract ID first
+  (let* ((contractId (manifold-get-contract-id-from-slug slug)) ; Retrieve contract ID first
          ;; Now create the data with the retrieved contract ID
          (data `(("amount" . ,amount)
                  ("contractId" . ,contractId)
@@ -144,9 +100,91 @@ ENDPOINT is the API endpoint. DATA is the data to be sent as JSON."
          (response (manifold-post-request "bet" data)))
     response))
 
+(defun manifold-place-bet (contractId outcome amount &optional limitProb expiresAt)
+  "place bet from contractId"
+  (let* ((data `(("amount" . ,amount)
+                ("contractId" . ,contractId)
+                ("outcome" . ,outcome)
+                ,@(when limitProb `(("limitProb" . ,limitProb)))
+                ,@(when expiresAt `(("expiresAt" . ,expiresAt)))))
+         (response (manifold-post-request "bet" data)))
+  response))
+
 ;; test
-(get-contract-id-from-slug "kalshi-will-the-government-be-shut")
-(manifold-place-bet 1 "kalshi-will-the-government-be-shut" "NO")
+(manifold-get-contract-id-from-slug "kalshi-will-the-government-be-shut")
+(manifold-place-bet-from-slug "kalshi-will-the-government-be-shut" "NO" 1)
+
+
+
+;; search markets
+
+(defun manifold-construct-search-url (term &optional sort filter contractType topicSlug creatorId limit offset)
+  "Construct the search URL for Manifold Markets API."
+  (concat "search-markets?"
+          "term=" (url-encode-url term)
+          "&sort=" (or sort "liquidity")
+          "&filter=" (or filter "open")
+          "&contractType=" (or contractType "BINARY")
+          (when topicSlug (concat "&" "topicSlug=" (url-encode-url topicSlug)))
+          (when creatorId (concat "&" "creatorId=" creatorId))
+          "&limit=" (or (number-to-string (or limit 5)) "5")
+          "&offset=" (or (number-to-string (or offset 0)) "0")))
+
+(defun manifold-search-markets (term &optional sort filter contractType topicSlug creatorId limit offset)
+  "Search markets on Manifold Markets API."
+  (let ((url (manifold-construct-search-url term sort filter contractType topicSlug creatorId limit offset)))
+    (let ((response (manifold-get-request url)))
+      (json-read-from-string response))))
+
+;; test
+(manifold-search-markets "biden")
+
+(defun manifold-interactive-bet (marketId)
+  "Function to bet on a market. MARKET-ID is the ID of the market."
+  (interactive "sBetting on market: ")
+  (let* ((outcome (completing-read "Choose outcome (YES/NO): " '("YES" "NO")))
+         (amount (read-number "How much mana? (default 10): " 10))
+         )
+  ;; Here, add the code to bring up the betting interface
+  ;; For example, you might open a new buffer with betting options for the given market-id
+  (message "Betting on market: %s toward %s for %s$M" marketId outcome amount)
+  (manifold-place-bet marketId outcome amount)
+  (message "Bet went through (error handling TODO)")
+  ))
+
+
+(defun manifold-display-search-results (term &optional sort filter contractType topicSlug creatorId limit offset)
+  "Display search results from Manifold Markets API."
+  (interactive "sSearch term: ")
+  (let ((results (manifold-search-markets term sort filter contractType topicSlug creatorId limit offset)))
+    (with-output-to-temp-buffer "*Manifold Search Results*"
+      (with-current-buffer "*Manifold Search Results*"
+        (erase-buffer)
+        (insert "Search Results for '" term "':\n\n")
+        (dolist (market (append results nil)) ;; Assuming 'results' is a list of markets
+          ;; Define market-id and market-name from the market alist
+          (let ((market-id (alist-get 'id market))
+                (market-name (alist-get 'question market)))  ; Adjust 'name to the actual key for the market name
+            ;; Insert market name with interactive properties
+            (insert (propertize (format "%s\n" (or market-name "Unknown Market"))
+                                'keymap (let ((keymap (make-sparse-keymap)))
+                                          (define-key keymap (kbd "<RET>")
+                                            (lambda () (interactive) (manifold-interactive-bet market-id)))
+                                          keymap)
+                                'mouse-face 'highlight
+                                'help-echo "Press Enter to bet on this market."))
+            ;; Insert other market details
+            (insert (format "URL: %s\n" (or (alist-get 'url market) "unknown url")))
+            (insert (format "Creator: %s\n" (or (alist-get 'creatorUsername market) "unknown username")))
+            (insert "------\n")))))))
+
+
+;test
+(manifold-display-search-results "biden" "liquidity" "resolved" "BINARY" nil nil 2 0)
+; test interactive
+(call-interactively #'manifold-display-search-results)
+
+
 
 
 (defun manifold-get-managrams ()
